@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+[project]
+name = "highlight-scraper"
+version = "0.3.3"
+description = "Watch what you highlight with the mouse; keep it as structured, tagged research notes."
+authors = [{name = "Michael Rivera", email = "mr.mainbytelabs@gmail.com"}]
+readme = "README.md"
+
+[project.optional-dependencies]
+paste = ["pynput"]
+tags = ["pynput"]
+tray = ["pystray", "pillow"]
+all = ["pynput", "pystray", "pillow"]
+dev = ["pytest"]
+
+[project.scripts]
+highlight-scraper = "highlight_scraper.cli:main"
+highlight-scraper-gui = "highlight_scraper.gui:main"
+highlight-scraper-tray = "highlight_scraper.tray:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
