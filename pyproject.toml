@@ -3,7 +3,6 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-[project]
 name = "highlight-scraper"
 version = "0.3.3"
 description = "Watch what you highlight with the mouse; keep it as structured, tagged research notes."
