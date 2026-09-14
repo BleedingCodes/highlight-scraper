@@ -133,8 +133,10 @@ class HighlightScraperGUI:
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.pause_chk.config(state="disabled")
+        self.export_btn.config(state="disabled")
         self.pause_var.set(False)
         self.session_entry.config(state="normal")
+        self.session = None
 
     def _toggle_pause(self):
         if not self.session:
