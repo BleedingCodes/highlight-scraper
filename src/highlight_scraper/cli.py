@@ -121,9 +121,11 @@ def cmd_status(args):
 def cmd_tag(args):
     config = load_config()
     store = CaptureStore(config["db_path"])
-    session = args.session or _running_session_name()  # None = tag the last capture overall
-    row_id = store.set_tag_for_last(args.tag, session=session)
-    store.close()
+    try:
+        session = args.session or _running_session_name()  # None = tag the last capture overall
+        row_id = store.set_tag_for_last(args.tag, session=session)
+    finally:
+        store.close()
     if row_id is None:
         scope = f"session '{session}'" if session else "any session"
         print(f"No captures found in {scope}.")
@@ -134,8 +136,10 @@ def cmd_tag(args):
 def cmd_sessions(args):
     config = load_config()
     store = CaptureStore(config["db_path"])
-    rows = store.sessions()
-    store.close()
+    try:
+        rows = store.sessions()
+    finally:
+        store.close()
     if not rows:
         print("No captures yet.")
         return
@@ -146,9 +150,11 @@ def cmd_sessions(args):
 def cmd_export(args):
     config = load_config()
     store = CaptureStore(config["db_path"])
-    exporter = EXPORTERS[args.format]
-    exporter(store, args.session, args.out)
-    store.close()
+    try:
+        exporter = EXPORTERS[args.format]
+        exporter(store, args.session, args.out)
+    finally:
+        store.close()
     print(f"Exported ({args.format}): {args.out}")
 
 
