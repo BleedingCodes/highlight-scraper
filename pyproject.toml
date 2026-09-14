@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "highlight-scraper"
-version = "0.3.3"
+version = "0.3.4"
 description = "Watch what you highlight with the mouse; keep it as structured, tagged research notes."
 authors = [{name = "Michael Rivera", email = "mr.mainbytelabs@gmail.com"}]
 readme = "README.md"
