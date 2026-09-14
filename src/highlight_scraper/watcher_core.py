@@ -205,6 +205,14 @@ class SelectionWatcher:
         finally:
             proc.terminate()
 
+        # wl-paste --watch exited (not a missing binary — that's caught above).
+        # Most likely cause: an older wl-clipboard that doesn't support --watch.
+        # Fall back to polling so capture continues rather than silently dying.
+        if not self._stop_event.is_set():
+            print("[watcher] wl-paste --watch exited; falling back to polling.", flush=True)
+            self.backend_name = "Wayland (wl-paste polling — --watch unsupported)"
+            self._run_wayland_polling()
+
     # ---- Wayland: plain polling fallback ------------------------------------
 
     def _run_wayland_polling(self):
