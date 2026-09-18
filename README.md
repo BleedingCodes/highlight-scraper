@@ -8,6 +8,7 @@ Built for researchers, writers, and power users who highlight text constantly
 and want a searchable record without changing how they work.
 
 ![Highlight Scraper GUI v0.4.0](https://github.com/BleedingCodes/highlight-scraper/blob/main/highlight-scraper-gui-v0-4.png)
+
 ---
 
 ## What It Does
@@ -15,8 +16,11 @@ and want a searchable record without changing how they work.
 - **Captures the X11 PRIMARY selection** — anything you highlight is saved instantly, no keypress required
 - **SQLite storage** — every capture is stored locally at `~/.local/share/highlight_scraper/captures.db`
 - **Session-based** — group captures by session name for later export and filtering
-- **Source attribution** — logs which app and window the highlight came from (X11 only)
-- **Tags** — mark captures as `important`, `question`, or `followup` via CLI or hotkeys
+- **Source attribution** — logs which app and window the highlight came from (X11 and Wayland)
+- **Tags** — mark captures as `important`, `question`, or `followup` via buttons, CLI, or hotkeys
+- **Search** — live search across captures in the GUI as you type; CLI search command available
+- **Per-capture delete** — remove individual captures from the GUI right-click menu or CLI
+- **Auto-export** — automatically export the current session to Markdown every N captures
 - **Export** — Markdown, CSV, or JSON
 - **Three front ends** — CLI, tkinter GUI, system tray icon — all running on the same engine
 - **Click-and-hold-to-paste** — accessibility gesture, X11 only, optional
@@ -124,6 +128,8 @@ Auto-created at `~/.config/highlight_scraper/config.json` on first run.
 | `merge_window_seconds` | `2.0` | Extending a highlight within this window updates the existing row |
 | `excluded_apps` | password managers | App name substrings — matches are never stored |
 | `db_path` | `~/.local/share/highlight_scraper/captures.db` | SQLite database location |
+| `auto_export_every` | `0` (off) | Auto-export every N captures to Markdown — 0 disables |
+| `auto_export_path` | `~/highlights_<session>.md` | Output file for auto-export |
 
 ---
 
@@ -173,9 +179,9 @@ needing to run `install.sh` first.
 
 ## Known Limits
 
-- Source attribution (which app/window) is **X11 only** — Wayland gets `None`, capture still works
+- **Source attribution on Wayland** — supported for Hyprland, Sway/i3, and KDE Plasma Wayland; returns `None` on other compositors, capture still works
 - **Browser URLs are never captured** — only the window title
-- **Paste-on-hold and tag hotkeys are X11 only** — Wayland blocks global input listening
+- **Paste-on-hold and tag hotkeys are X11 only** — Wayland blocks global input listening without elevated permissions
 - **Wayland event-loop path is unverified on a live Wayland session** — X11 path has been verified end-to-end on Linux Mint/Cinnamon
 - **Linux only** — PRIMARY selection has no equivalent on Windows or macOS
 
