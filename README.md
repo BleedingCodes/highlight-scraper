@@ -7,6 +7,8 @@ All four changes are to the program itself, not the GUI skin.
 - **storage.py** — `delete_capture(row_id)`: permanently deletes one
   capture by id. Thread-safe; safe to call while a session is running.
   Returns True if a row was deleted, False if the id didn't exist.
+![Highlight Scraper GUI v0.4.0](https://github.com/BleedingCodes/highlight-scraper/blob/main/highlight-scraper-gui-v0-4.png)
+
 
 - **storage.py** — `search(query, session, limit)`: case-insensitive
   substring search across all capture text bodies. Optionally restricted
