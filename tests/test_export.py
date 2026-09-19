@@ -6,6 +6,8 @@ hands to someone else, so they'd better be right.
 import csv
 import json
 
+import pytest
+
 from highlight_scraper import export as exporters
 from highlight_scraper.storage import CaptureStore
 
@@ -70,4 +72,67 @@ def test_export_with_no_session_covers_all_sessions(tmp_path):
     data = json.loads(out.read_text())
 
     assert {row["session"] for row in data} == {"A", "B"}
+    store.close()
+
+
+# --- overwrite guard tests ---
+
+def test_export_markdown_refuses_to_overwrite_by_default(tmp_path):
+    store, _ = _seeded_store(tmp_path)
+    out = tmp_path / "out.md"
+    out.write_text("existing content")
+
+    with pytest.raises(FileExistsError):
+        exporters.export_markdown(store, "proj", out)
+
+    assert out.read_text() == "existing content"
+    store.close()
+
+
+def test_export_csv_refuses_to_overwrite_by_default(tmp_path):
+    store, _ = _seeded_store(tmp_path)
+    out = tmp_path / "out.csv"
+    out.write_text("existing content")
+
+    with pytest.raises(FileExistsError):
+        exporters.export_csv(store, "proj", out)
+
+    assert out.read_text() == "existing content"
+    store.close()
+
+
+def test_export_json_refuses_to_overwrite_by_default(tmp_path):
+    store, _ = _seeded_store(tmp_path)
+    out = tmp_path / "out.json"
+    out.write_text("existing content")
+
+    with pytest.raises(FileExistsError):
+        exporters.export_json(store, "proj", out)
+
+    assert out.read_text() == "existing content"
+    store.close()
+
+
+def test_export_markdown_force_overwrites(tmp_path):
+    store, _ = _seeded_store(tmp_path)
+    out = tmp_path / "out.md"
+    out.write_text("old content")
+
+    exporters.export_markdown(store, "proj", out, force=True)
+
+    content = out.read_text()
+    assert "First finding" in content
+    assert "old content" not in content
+    store.close()
+
+
+def test_export_json_force_overwrites(tmp_path):
+    store, _ = _seeded_store(tmp_path)
+    out = tmp_path / "out.json"
+    out.write_text("old content")
+
+    exporters.export_json(store, "proj", out, force=True)
+
+    data = json.loads(out.read_text())
+    assert len(data) == 2
     store.close()
