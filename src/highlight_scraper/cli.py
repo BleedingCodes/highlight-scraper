@@ -7,7 +7,7 @@ cli.py — command-line front end for the research highlight capture tool.
     highlight-scraper status
     highlight-scraper tag TAGNAME
     highlight-scraper sessions
-    highlight-scraper export --format md|csv|json --out PATH [--session NAME]
+    highlight-scraper export --format md|csv|json --out PATH [--session NAME] [--force]
 
 All captures go into one SQLite database (~/.local/share/highlight_scraper/
 captures.db by default — see config.py), tagged with a session name so you
@@ -152,7 +152,11 @@ def cmd_export(args):
     store = CaptureStore(config["db_path"])
     try:
         exporter = EXPORTERS[args.format]
-        exporter(store, args.session, args.out)
+        try:
+            exporter(store, args.session, args.out, force=args.force)
+        except FileExistsError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
     finally:
         store.close()
     print(f"Exported ({args.format}): {args.out}")
@@ -240,6 +244,8 @@ def main():
     p_export.add_argument("--format", choices=["md", "csv", "json"], required=True)
     p_export.add_argument("--out", required=True, help="Output file path")
     p_export.add_argument("--session", default=None, help="Omit to export all sessions")
+    p_export.add_argument("--force", action="store_true",
+                           help="Overwrite the output file if it already exists")
     p_export.set_defaults(func=cmd_export)
 
     p_run = sub.add_parser("_run", help=argparse.SUPPRESS)  # internal use only
