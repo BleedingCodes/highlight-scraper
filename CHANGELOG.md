@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1 — export overwrite guard
+
+- **export.py** — all three exporters (Markdown, CSV, JSON) now refuse to
+  overwrite an existing file by default. Attempting to export to a path that
+  already exists raises `FileExistsError` with a clear message.
+  Pass `force=True` in the API (or `--force` on the CLI) to allow the overwrite.
+- **cli.py** — `export` subcommand gains a `--force` flag. Without it,
+  the command exits with an error and a clear message if the output file exists.
+  The existing file is never modified on a refused export.
+- **tests/test_export.py** — five new tests covering the overwrite guard:
+  all three formats block silent overwrite by default, all three verify the
+  existing file is untouched on refusal, and two formats verify `force=True`
+  allows the overwrite.
+
+
+
 ## 0.4.0 — Four program-level improvements
 
 All four changes are to the program itself, not the GUI skin.
