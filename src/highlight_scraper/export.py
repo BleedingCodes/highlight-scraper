@@ -3,6 +3,9 @@ export.py — turn the SQLite capture store into a plain file: Markdown,
 CSV, or JSON. Read from the database directly if you like (it's just
 SQLite), but these give you a portable file to hand to something else
 (Obsidian, a spreadsheet, a script).
+
+All three exporters refuse to overwrite an existing file by default.
+Pass force=True (or --force on the CLI) to allow it.
 """
 
 import csv
@@ -17,7 +20,18 @@ def _ordered_rows(store, session):
     return rows
 
 
-def export_markdown(store, session, out_path):
+def _guard_overwrite(out_path: str, force: bool) -> None:
+    """Raise FileExistsError if out_path already exists and force is False."""
+    if not force and Path(out_path).exists():
+        raise FileExistsError(
+            f"Output file already exists: {out_path}\n"
+            "Use --force to overwrite it."
+        )
+
+
+def export_markdown(store, session, out_path, *, force: bool = False):
+    _guard_overwrite(out_path, force)
+
     rows = _ordered_rows(store, session)
 
     grouped = {}
@@ -39,7 +53,9 @@ def export_markdown(store, session, out_path):
     Path(out_path).write_text("\n".join(lines), encoding="utf-8")
 
 
-def export_csv(store, session, out_path):
+def export_csv(store, session, out_path, *, force: bool = False):
+    _guard_overwrite(out_path, force)
+
     rows = _ordered_rows(store, session)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -48,7 +64,9 @@ def export_csv(store, session, out_path):
             writer.writerow([r.id, r.captured_at, r.session, r.source_app, r.source_window, r.tag, r.text])
 
 
-def export_json(store, session, out_path):
+def export_json(store, session, out_path, *, force: bool = False):
+    _guard_overwrite(out_path, force)
+
     rows = _ordered_rows(store, session)
     Path(out_path).write_text(
         json.dumps([asdict(r) for r in rows], indent=2, ensure_ascii=False),
