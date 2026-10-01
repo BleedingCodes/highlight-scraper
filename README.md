@@ -188,9 +188,7 @@ needing to run `install.sh` first.
 ---
 
 ## Built by MainbyteLabs
-
-Python tooling for electronics labs, hardware shops, and Linux-based tech teams.
-
+Technical documentation and Python tooling for electronics labs and hardware teams — developed with AI, directed and tested by a working electronics technician.
 [MainbyteLabs](https://github.com/MR-MainbyteLabs) ·
 [LinkedIn](https://linkedin.com/in/michael-rivera-c0ding) ·
 mr.mainbytelabs@gmail.com
