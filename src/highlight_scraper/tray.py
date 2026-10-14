@@ -61,6 +61,8 @@ class TrayApp:
     def _start(self, icon=None, item=None):
         session_name = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.session = CaptureSession(self.config["db_path"], session_name, self.config)
+        from highlight_scraper.unknown_source_prompt import prompt_unknown_source
+        self.session.unknown_source_resolver = prompt_unknown_source
         try:
             self.session.start()
         except RuntimeError as e:
