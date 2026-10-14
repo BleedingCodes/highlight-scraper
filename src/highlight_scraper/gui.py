@@ -20,6 +20,7 @@ Requires (in addition to the base package):
 """
 
 import queue
+import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -377,6 +378,7 @@ class HighlightScraperGUI:
 
         self.session = CaptureSession(self.config["db_path"], name, self.config)
         self.session.listeners.append(self._on_capture)
+        self.session.unknown_source_resolver = self._resolve_unknown_source
         try:
             self.session.start()
         except RuntimeError as e:
@@ -551,10 +553,29 @@ class HighlightScraperGUI:
         # Called from watcher background thread — only queue, never touch widgets
         self.event_queue.put(row)
 
+    def _resolve_unknown_source(self, source_window):
+        """Marshal the modal prompt onto Tk's UI thread and fail closed."""
+        response = {"action": "discard"}
+        completed = threading.Event()
+        self.event_queue.put(("unknown_source", source_window, response, completed))
+        completed.wait()
+        return response
+
     def _drain_queue(self) -> None:
         updated = False
         while not self.event_queue.empty():
-            self.event_queue.get_nowait()
+            item = self.event_queue.get_nowait()
+            if isinstance(item, tuple) and item and item[0] == "unknown_source":
+                from highlight_scraper.unknown_source_prompt import prompt_unknown_source
+                _, title, response, completed = item
+                try:
+                    response.update(prompt_unknown_source(title, parent=self.root))
+                except Exception:
+                    # Keep the UI alive; the core receives the default discard.
+                    pass
+                finally:
+                    completed.set()
+                continue
             self._capture_count += 1
             updated = True
         if updated:
