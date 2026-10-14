@@ -27,6 +27,7 @@ and want a searchable record without changing how they work.
 - **Ctrl+Alt+1/2/3 tag hotkeys** — optional, requires `pynput`
 - **Merge-on-extension** — extending a highlight within 2 seconds updates the existing row rather than creating a duplicate
 - **Excluded apps** — password managers and other sensitive apps are blocked from capture by default
+- **Unknown-source warning** — when the source app cannot be identified, capture waits for your decision and is discarded unless you choose to save it
 
 ---
 
@@ -127,6 +128,7 @@ Auto-created at `~/.config/highlight_scraper/config.json` on first run.
 | `min_length` | `3` | Highlights shorter than this are ignored |
 | `merge_window_seconds` | `2.0` | Extending a highlight within this window updates the existing row |
 | `excluded_apps` | password managers | App name substrings — matches are never stored |
+| `remembered_unknown_sources` | `{}` | Exact window-title to source-label mappings explicitly saved from the unknown-source prompt |
 | `db_path` | `~/.local/share/highlight_scraper/captures.db` | SQLite database location |
 | `auto_export_every` | `0` (off) | Auto-export every N captures to Markdown — 0 disables |
 | `auto_export_path` | `~/highlights_<session>.md` | Output file for auto-export |
@@ -179,6 +181,7 @@ needing to run `install.sh` first.
 
 ## Known Limits
 
+- **Unknown source handling** — unidentified captures are held before SQLite and a prompt offers Continue anyway, Name source & save, or Don’t capture. Closing the prompt discards the capture. A name applies only to that capture unless the separate “Remember this source” checkbox is selected; remembering uses the exact window title and entered label. If no title is available, the source cannot be remembered. The diagnostic warning records attribution metadata, including the window title when available, never the highlighted text.
 - **Source attribution on Wayland** — supported for Hyprland, Sway/i3, and KDE Plasma Wayland; returns `None` on other compositors, capture still works
 - **Browser URLs are never captured** — only the window title
 - **Paste-on-hold and tag hotkeys are X11 only** — Wayland blocks global input listening without elevated permissions
@@ -188,7 +191,9 @@ needing to run `install.sh` first.
 ---
 
 ## Built by MainbyteLabs
-Technical documentation and Python tooling for electronics labs and hardware teams — developed with AI, directed and tested by a working electronics technician.
+
+Python tooling for electronics labs, hardware shops, and Linux-based tech teams.
+
 [MainbyteLabs](https://github.com/MR-MainbyteLabs) ·
 [LinkedIn](https://linkedin.com/in/michael-rivera-c0ding) ·
 mr.mainbytelabs@gmail.com
