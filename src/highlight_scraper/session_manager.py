@@ -21,11 +21,14 @@ in place instead of inserting a new one.
 
 import threading
 import time
+import logging
 from pathlib import Path
 
 from highlight_scraper.source_info import get_active_window_info
 from highlight_scraper.storage import CaptureStore
 from highlight_scraper.watcher_core import SelectionWatcher
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_like_extension(old_text: str, new_text: str) -> bool:
@@ -42,8 +45,12 @@ class CaptureSession:
         self.store = CaptureStore(db_path)
         self.paused = False
         self.listeners = []  # callables(Capture) -> None, for UI updates
+        # A resolver returns {"action": "continue"|"name"|"discard",
+        # "label": str, "remember": bool}. Missing/failed decisions discard.
+        self.unknown_source_resolver = None
         self._lock = threading.Lock()
         self._last_text = None
+        self._last_source = None
         self._last_capture_time = 0.0
 
         # 0.4.0 — auto-export counter
@@ -82,15 +89,59 @@ class CaptureSession:
         if app and any(pattern.lower() in app.lower() for pattern in excluded):
             return
 
+        source_app = (app or "").strip()
+        source_window = (window or "").strip()
+        if source_app.lower() in ("unknown", "none", "<unknown>"):
+            source_app = ""
+        if not source_app:
+            remembered = self.config.setdefault("remembered_unknown_sources", {})
+            # Be tolerant of an older/hand-edited config with an unexpected type.
+            if not isinstance(remembered, dict):
+                remembered = {}
+                self.config["remembered_unknown_sources"] = remembered
+            if source_window and remembered.get(source_window):
+                source_app = remembered[source_window]
+            else:
+                # Log attribution metadata only. Never include selected text.
+                logger.warning(
+                    "Selection source app is unknown; source_window=%r",
+                    source_window or None,
+                )
+                decision = None
+                if self.unknown_source_resolver:
+                    try:
+                        decision = self.unknown_source_resolver(source_window or None)
+                    except Exception:
+                        logger.exception("Unknown-source prompt failed; capture discarded")
+                decision = decision or {}
+                action = decision.get("action")
+                label = (decision.get("label") or "").strip()
+                if action == "name" and label:
+                    source_app = label
+                    if decision.get("remember") and source_window:
+                        remembered[source_window] = label
+                        try:
+                            from highlight_scraper.config import save_config
+                            save_config(self.config)
+                        except OSError:
+                            logger.exception("Could not save remembered source")
+                elif action == "continue":
+                    source_app = "⚠ Unknown source"
+                else:
+                    return
+
         now = time.time()
         merge_window = self.config.get("merge_window_seconds", 2.0)
+        source_identity = (source_app, source_window or None)
         with self._lock:
             is_extension = (
                 self._last_text is not None
+                and self._last_source == source_identity
                 and now - self._last_capture_time <= merge_window
                 and _looks_like_extension(self._last_text, text)
             )
             self._last_text = text
+            self._last_source = source_identity
             self._last_capture_time = now
 
         if is_extension:
@@ -98,7 +149,7 @@ class CaptureSession:
         else:
             row = self.store.add_capture(
                 text=text, session=self.session_name,
-                source_window=window, source_app=app,
+                source_window=source_window or None, source_app=source_app,
             )
 
         if row is None:
