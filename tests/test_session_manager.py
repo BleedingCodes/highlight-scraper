@@ -20,7 +20,12 @@ def _session(tmp_path, **config_overrides):
         "merge_window_seconds": 2.0,
         **config_overrides,
     }
-    return CaptureSession(tmp_path / "captures.db", "test-session", config)
+    session = CaptureSession(tmp_path / "captures.db", "test-session", config)
+    # These tests exercise capture, filtering, and merging semantics rather
+    # than the interactive unknown-source decision. Explicitly approve unknown
+    # sources here so results do not depend on the developer's active window.
+    session.unknown_source_resolver = lambda _window: {"action": "continue"}
+    return session
 
 
 class _FakeClock:
@@ -80,6 +85,20 @@ def test_excluded_app_match_is_case_insensitive(tmp_path, monkeypatch):
     session._handle("should still be blocked")
 
     assert session.store.query(session="test-session") == []
+    session.store.close()
+
+
+def test_unknown_source_is_discarded_without_user_decision(tmp_path, monkeypatch, caplog):
+    session = _session(tmp_path)
+    session.unknown_source_resolver = None
+    monkeypatch.setattr(session_manager, "get_active_window_info",
+                        lambda: ("Private terminal window", None))
+
+    session._handle("secret-token-that-must-not-be-logged")
+
+    assert session.store.query(session="test-session") == []
+    assert "Private terminal window" in caplog.text
+    assert "secret-token-that-must-not-be-logged" not in caplog.text
     session.store.close()
 
 
