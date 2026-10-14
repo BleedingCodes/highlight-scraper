@@ -26,6 +26,9 @@ DEFAULTS = {
         "keepassxc", "keepass", "bitwarden", "1password",
         "gnome-keyring", "seahorse",
     ],
+    # Exact window title -> user-provided source label. Only set through the
+    # separate remember option in the unknown-source prompt.
+    "remembered_unknown_sources": {},
     "db_path": str(Path.home() / ".local" / "share" / "highlight_scraper" / "captures.db"),
 }
 
