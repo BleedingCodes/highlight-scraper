@@ -7,7 +7,9 @@ came from. Three front ends: CLI, desktop GUI, and system tray icon.
 Built for researchers, writers, and power users who highlight text constantly
 and want a searchable record without changing how they work.
 
-![Highlight Scraper GUI v0.4.0](https://github.com/BleedingCodes/highlight-scraper/blob/main/highlight-scraper-gui-v0-4.png)
+![Highlight Scraper GUI](highlight-scraper-gui-v0-4.png)
+
+![Unknown source warning prompt](highlight-scraper_unknown-source.png)
 
 ---
 
@@ -38,7 +40,7 @@ and want a searchable record without changing how they work.
 | Python 3.9+ | All | |
 | `xclip`, `python3-xlib`, `xdotool` | X11 | For event-driven capture and source attribution |
 | `wl-clipboard` | Wayland | For capture; paste/hotkey features are X11 only |
-| `python3-tk` | Linux | GUI front end only |
+| `python3-tk` | Linux | GUI and unknown-source prompts in GUI, CLI, and tray |
 | `pynput` | Optional | Paste-on-hold and tag hotkeys |
 | `pystray`, `pillow` | Optional | Tray icon front end |
 
@@ -142,8 +144,9 @@ highlight-scraper/
 ├── src/highlight_scraper/
 │   ├── watcher_core.py     # X11/Wayland selection watcher, backend detection
 │   ├── session_manager.py  # Central engine — filtering, merging, storage coordination
+│   ├── unknown_source_prompt.py # Fail-closed prompt for unidentified sources
 │   ├── storage.py          # SQLite capture store
-│   ├── source_info.py      # Active app/window detection (X11 only)
+│   ├── source_info.py      # Active app/window detection (X11 and supported Wayland)
 │   ├── export.py           # Markdown, CSV, JSON export
 │   ├── config.py           # Config file load/save
 │   ├── paste_on_hold.py    # Click-and-hold-to-paste gesture
@@ -151,11 +154,13 @@ highlight-scraper/
 │   ├── cli.py              # CLI front end
 │   ├── gui.py              # tkinter GUI front end
 │   └── tray.py             # System tray front end
-├── tests/                  # 29 pytest tests
+├── tests/                  # 32 pytest tests
 ├── install.sh              # One-command setup
 ├── conftest.py             # Lets pytest find the package without installing
 ├── pyproject.toml
 ├── CHANGELOG.md
+├── highlight-scraper-complete-modification-guide.md
+├── highlight-scraper_unknown-source.png
 ├── LICENSE
 └── README.md
 ```
@@ -168,12 +173,13 @@ logic lives in `session_manager.py` — change it once, it applies everywhere.
 ## Running Tests
 
 ```bash
-pip install pytest --break-system-packages
-pytest
+python3 -m pip install -e '.[dev]'
+python3 -m pytest -q
 ```
 
-29 tests covering config defaults and merging, the storage layer, all three
-export formats, session manager filtering rules, and excluded-app blocking.
+32 tests covering config defaults, export formats and overwrite protection,
+session filtering and merge behavior, watcher platform detection, and
+fail-closed handling when the capture source is unknown.
 Works right after cloning — `conftest.py` puts `src/` on the path without
 needing to run `install.sh` first.
 
