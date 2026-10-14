@@ -193,7 +193,7 @@ needing to run `install.sh` first.
 - **Paste-on-hold and tag hotkeys are X11 only** — Wayland blocks global input listening without elevated permissions
 - **Wayland event-loop path is unverified on a live Wayland session** — X11 path has been verified end-to-end on Linux Mint/Cinnamon
 - **Linux only** — PRIMARY selection has no equivalent on Windows or macOS
-
+- **Auto-export does not refresh an existing Markdown file** — a scheduled export succeeds only when its target file does not already exist. Later attempts to write to the same path are blocked by the overwrite guard, and the failure is silently ignored. Captures remain in SQLite, but the Markdown file can become stale. Until this is fixed, export to a new filename or manually replace the file with the CLI’s --force option.
 ---
 
 ## Built by MainbyteLabs
