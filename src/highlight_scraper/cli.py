@@ -166,6 +166,8 @@ def cmd_run_foreground(args):
     """Internal — this is what actually runs in the background process."""
     config = load_config()
     session = CaptureSession(config["db_path"], args.session, config)
+    from highlight_scraper.unknown_source_prompt import prompt_unknown_source
+    session.unknown_source_resolver = prompt_unknown_source
     session.listeners.append(
         lambda row: print(
             f"[{row.captured_at}] ({row.source_app or 'unknown'}) {row.text}"
