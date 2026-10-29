@@ -1,7 +1,9 @@
 """
 source_info.py — best-effort "what app/window was this highlighted in".
 
-X11: uses xdotool. Returns (window_title, app_name).
+X11: uses xdotool for the window title and xprop (WM_CLASS) for the app
+  class — xdotool has no `getwindowclassname` subcommand, so the app must
+  be read from WM_CLASS directly.
 Wayland (0.4.0): reads /proc/<focused_pid>/cmdline via the compositor's
   focused-window mechanism. Compositor-specific helpers are tried in order:
     1. hyprctl  (Hyprland)
@@ -23,12 +25,14 @@ Install (Wayland): hyprctl / swaymsg / kdotool are compositor built-ins;
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 
 from highlight_scraper.watcher_core import is_wayland
 
 _have_xdotool  = shutil.which("xdotool")  is not None
+_have_xprop    = shutil.which("xprop")    is not None
 _have_hyprctl  = shutil.which("hyprctl")  is not None
 _have_swaymsg  = shutil.which("swaymsg")  is not None
 _have_kdotool  = shutil.which("kdotool")  is not None
@@ -43,7 +47,40 @@ def get_active_window_info() -> tuple[str | None, str | None]:
         return _get_wayland_window_info()
     if not _have_xdotool:
         return None, None
-    return _run_xdotool("getwindowname"), _run_xdotool("getwindowclassname")
+    return _run_xdotool("getwindowname"), _x11_app_class()
+
+
+def _x11_app_class() -> str | None:
+    """App class from WM_CLASS via xprop.
+
+    xdotool has no `getwindowclassname` subcommand (reproduced on
+    xdotool 3.20160805.1 — `xdotool help` lists no such command), so
+    the old call always returned None on X11 and every capture was
+    stored unattributed — which, with the 0.4.2 fail-closed guard,
+    skipped capture entirely whenever an exclude list was set.
+    """
+    if not _have_xprop:
+        return None
+    try:
+        wid = subprocess.run(
+            ["xdotool", "getactivewindow"], check=False,
+            capture_output=True, text=True, timeout=1,
+        ).stdout.strip()
+        if not wid:
+            return None
+        result = subprocess.run(
+            ["xprop", "-id", wid, "-notype", "WM_CLASS"], check=False,
+            capture_output=True, text=True, timeout=1,
+        )
+        if result.returncode != 0:
+            return None
+        pair = re.search(r'"([^"]*)"\s*,\s*"([^"]*)"', result.stdout)
+        if pair:
+            return pair.group(2)  # the class, e.g. "Gnome-terminal"
+        single = re.search(r'"([^"]+)"', result.stdout)
+        return single.group(1) if single else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
 
 
 # ── X11 ──────────────────────────────────────────────────────────────────────
