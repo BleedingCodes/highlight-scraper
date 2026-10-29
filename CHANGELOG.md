@@ -3,7 +3,7 @@
 ## 0.4.2 — remediation release
 
 Audit-driven fixes (see AUDIT-FINDINGS.md / AUDIT-REMEDIATION.md). Test
-suite: 31 → 67 tests, all passing.
+suite: 31 → 73 tests, all passing.
 
 - **Privacy fail-closed** — when app attribution is unavailable (GNOME
   Wayland, missing xdotool, attribution failure) and `excluded_apps` is
@@ -44,7 +44,14 @@ suite: 31 → 67 tests, all passing.
   an apostrophe so spreadsheets treat them as text, not formulas.
 - **source_info.py** — `from __future__ import annotations`; the package
   is importable on the README-declared Python 3.9 again (PEP 604 unions
-  used to make it unimportable).
+  used to make it unimportable). Also new in this release: X11 app
+  attribution actually works — `xdotool getwindowclassname` is not an
+  xdotool subcommand (verified against xdotool 3.20160805.1), so
+  `source_app` was always stored unattributed on X11; combined with the
+  fail-closed guard above, any non-empty `excluded_apps` list then
+  skipped every capture on X11. The app class is now read from WM_CLASS
+  via `xprop` (new guards in `tests/test_source_attribution.py`;
+  verified live: captures attributed to real window classes).
 - **Docs** — README "Known Limits" rewritten (fail-closed privacy,
   plaintext/owner-only storage), config table updated, command reference
   corrected (`status` doesn't auto-heal; `export` lists `--force`);
