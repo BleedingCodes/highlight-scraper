@@ -18,7 +18,7 @@ and want a searchable record without changing how they work.
 - **Session-based** — group captures by session name for later export and filtering
 - **Source attribution** — logs which app and window the highlight came from (X11 and Wayland)
 - **Tags** — mark captures as `important`, `question`, or `followup` via buttons, CLI, or hotkeys
-- **Search** — live search across captures in the GUI as you type; CLI search command available
+- **Search** — live search across captures in the GUI as you type
 - **Per-capture delete** — remove individual captures from the GUI right-click menu or CLI
 - **Auto-export** — automatically export the current session to Markdown every N captures (replaces the output file each time; failures appear in the backend log)
 - **Export** — Markdown, CSV, or JSON (CSV text cells beginning with `= + - @` are apostrophe-prefixed so spreadsheets import them as literal text, not formulas)
@@ -150,7 +150,7 @@ highlight-scraper/
 │   ├── cli.py              # CLI front end
 │   ├── gui.py              # tkinter GUI front end
 │   └── tray.py             # System tray front end
-├── tests/                  # 29 pytest tests
+├── tests/                  # 67 pytest tests
 ├── install.sh              # One-command setup
 ├── conftest.py             # Lets pytest find the package without installing
 ├── pyproject.toml
@@ -171,8 +171,10 @@ pip install pytest --break-system-packages
 pytest
 ```
 
-29 tests covering config defaults and merging, the storage layer, all three
-export formats, session manager filtering rules, and excluded-app blocking.
+67 tests covering config defaults, merging, and fail-closed exclusions, all
+three export formats (including the overwrite guard and CSV neutralization),
+session manager filtering rules, capture-file permissions, and the watcher
+and CLI robustness paths.
 Works right after cloning — `conftest.py` puts `src/` on the path without
 needing to run `install.sh` first.
 
