@@ -20,7 +20,6 @@ Requires (in addition to the base package):
 """
 
 import queue
-import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -145,6 +144,25 @@ def _apply_theme(root: tk.Tk) -> None:
                  troughcolor=BG,
                  arrowcolor=FG_MUTED,
                  bordercolor=BORDER)
+
+
+# ── export (module level so the core write path is testable without a Tk
+#    root; audit finding 6) ─────────────────────────────────────────────────────
+
+def _export_to(store, session_name: str, path: str) -> None:
+    """Resolve the exporter from the file extension and write the file.
+
+    Always force=True: the Tk save dialog already asked the user about
+    replacing an existing file, so the exporter must not reject it after
+    the fact (that used to abort the export with an unhandled
+    FileExistsError after the user had confirmed 'Replace')."""
+    ext = Path(path).suffix.lstrip(".").lower()
+    exporter = {
+        "md":   exporters.export_markdown,
+        "csv":  exporters.export_csv,
+        "json": exporters.export_json,
+    }.get(ext, exporters.export_markdown)
+    exporter(store, session_name, path, force=True)
 
 
 # ── main window ───────────────────────────────────────────────────────────────
@@ -374,11 +392,18 @@ class HighlightScraperGUI:
 
     def start(self) -> None:
         name = self.session_var.get().strip() or datetime.now().strftime("%Y%m%d_%H%M%S")
+        if not name or any(c in name for c in ("/", "\\", "\0")):
+            # session names are embedded into a log filename (audit finding 10)
+            messagebox.showerror(
+                "Invalid session name",
+                "The session name may not contain '/', '\\', or null "
+                "characters and may not be empty.",
+            )
+            return
         self.session_var.set(name)
 
         self.session = CaptureSession(self.config["db_path"], name, self.config)
         self.session.listeners.append(self._on_capture)
-        self.session.unknown_source_resolver = self._resolve_unknown_source
         try:
             self.session.start()
         except RuntimeError as e:
@@ -553,29 +578,10 @@ class HighlightScraperGUI:
         # Called from watcher background thread — only queue, never touch widgets
         self.event_queue.put(row)
 
-    def _resolve_unknown_source(self, source_window):
-        """Marshal the modal prompt onto Tk's UI thread and fail closed."""
-        response = {"action": "discard"}
-        completed = threading.Event()
-        self.event_queue.put(("unknown_source", source_window, response, completed))
-        completed.wait()
-        return response
-
     def _drain_queue(self) -> None:
         updated = False
         while not self.event_queue.empty():
-            item = self.event_queue.get_nowait()
-            if isinstance(item, tuple) and item and item[0] == "unknown_source":
-                from highlight_scraper.unknown_source_prompt import prompt_unknown_source
-                _, title, response, completed = item
-                try:
-                    response.update(prompt_unknown_source(title, parent=self.root))
-                except Exception:
-                    # Keep the UI alive; the core receives the default discard.
-                    pass
-                finally:
-                    completed.set()
-                continue
+            self.event_queue.get_nowait()
             self._capture_count += 1
             updated = True
         if updated:
@@ -638,13 +644,7 @@ class HighlightScraperGUI:
         )
         if not path:
             return
-        ext = Path(path).suffix.lstrip(".").lower()
-        exporter = {
-            "md":   exporters.export_markdown,
-            "csv":  exporters.export_csv,
-            "json": exporters.export_json,
-        }.get(ext, exporters.export_markdown)
-        exporter(store, session_name, path)
+        _export_to(store, session_name, path)
         messagebox.showinfo("Export", f"Written to:\n{path}")
 
     # ── search / filter (0.4.0) ───────────────────────────────────────────────
