@@ -20,6 +20,8 @@ Install (Wayland): hyprctl / swaymsg / kdotool are compositor built-ins;
                    no separate install needed on those compositors.
 """
 
+from __future__ import annotations
+
 import json
 import shutil
 import subprocess
