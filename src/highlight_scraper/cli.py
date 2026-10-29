@@ -40,9 +40,40 @@ EXPORTERS = {
 
 
 def _running_session_name():
-    if not PID_FILE.exists():
+    info = _read_pid_file()
+    if info is None:
         return None
-    return json.loads(PID_FILE.read_text()).get("session")
+    return info.get("session")
+
+
+def _validate_session_name(name: str) -> str:
+    """Reject session names that cannot be embedded safely in the log
+    filename (audit finding 10: a '/' used to crash cmd_start with an
+    unhandled FileNotFoundError traceback)."""
+    if not name or not name.strip() or any(c in name for c in ("/", "\\", "\0")):
+        print(f"Error: invalid session name {name!r} — it may not contain "
+              "'/', '\\', or null characters.", file=sys.stderr)
+        sys.exit(1)
+    return name
+
+
+def _read_pid_file():
+    """Parsed pid-file dict, or None after removing an unreadable/corrupt
+    file — a truncated or hand-edited pid file used to raise
+    JSONDecodeError out of every command, blocking start/status/stop/tag
+    until it was removed by hand (audit finding 10). Valid-JSON-but-not-an
+   -object content (e.g. `[]`) counts as corrupt too (the pid-file
+    counterpart of config finding N2)."""
+    try:
+        info = json.loads(PID_FILE.read_text())
+    except (OSError, ValueError):
+        pass
+    else:
+        if isinstance(info, dict):
+            return info
+    print("Corrupt pid file — removing it.")
+    PID_FILE.unlink(missing_ok=True)
+    return None
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -56,17 +87,32 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _pid_is_scraper(pid: int) -> bool:
+    """True only if this pid is a running highlight-scraper daemon: its
+    /proc/<pid>/cmdline must contain this CLI's own '-m highlight_scraper.cli'
+    argv pair. Without this identity check, a recycled pid (daemon crashed
+    and its pid got reused by e.g. a browser) would be SIGTERMed by
+    'stop' (audit finding 7)."""
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return b"-m" in argv and b"highlight_scraper.cli" in argv
+
+
 def cmd_start(args):
-    if PID_FILE.exists():
-        info = json.loads(PID_FILE.read_text())
-        if _pid_is_alive(info.get("pid", -1)):
+    info = _read_pid_file() if PID_FILE.exists() else None
+    if info is not None:
+        pid = info.get("pid", -1)
+        if _pid_is_alive(pid) and _pid_is_scraper(pid):
             print("Already running. Run 'stop' first.")
             sys.exit(1)
-        print(f"Found a stale pid file (process {info.get('pid')} isn't running "
-              f"— it likely crashed or was killed). Cleaning it up and starting fresh.")
+        print(f"Found a stale pid file (process {pid} is not a running "
+              f"highlight-scraper daemon — it likely crashed, or the pid "
+              f"was recycled). Cleaning it up and starting fresh.")
         PID_FILE.unlink(missing_ok=True)
 
-    session_name = args.session or datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_name = _validate_session_name(args.session or datetime.now().strftime("%Y%m%d_%H%M%S"))
     log_path = Path.home() / f".highlight_scraper_{session_name}.log"
 
     cmd = [sys.executable, "-m", "highlight_scraper.cli", "_run", "--session", session_name]
@@ -76,6 +122,10 @@ def cmd_start(args):
         cmd.append("--with-tags")
 
     log_fh = open(log_path, "w")
+    try:
+        os.fchmod(log_fh.fileno(), 0o600)  # log holds raw capture text (finding 5)
+    except OSError:
+        pass  # non-POSIX or exotic mount — best effort, capture still works
     proc = subprocess.Popen(
         cmd, stdout=log_fh, stderr=subprocess.STDOUT,
         start_new_session=True,  # detach so it survives this shell exiting
@@ -83,6 +133,25 @@ def cmd_start(args):
     log_fh.close()  # child keeps its own handle to the file
 
     PID_FILE.write_text(json.dumps({"pid": proc.pid, "session": session_name}))
+    try:
+        PID_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+    # Give the child a moment to fail. The daemon dies within milliseconds
+    # in the common birth-failure cases (missing backend, unreadable config,
+    # missing optional dependency) — any early exit means capture did not
+    # start, and reporting "Started" then was misleading (finding 9; the
+    # --with-tags/no-pynput case is reviewer finding N3).
+    time.sleep(0.5)
+    rc = proc.poll()
+    if rc is not None:
+        PID_FILE.unlink(missing_ok=True)
+        print(f"ERROR: the daemon exited immediately (exit code {rc}). "
+              "Capture did not start.", file=sys.stderr)
+        print(f"Backend/errors log: {log_path}", file=sys.stderr)
+        sys.exit(1)
+
     print(f"Started (pid={proc.pid}), session: {session_name}")
     print(f"Database: {load_config()['db_path']}")
     print(f"Backend/errors log: {log_path}")
@@ -94,12 +163,20 @@ def cmd_start(args):
 
 
 def cmd_stop(args):
-    if not PID_FILE.exists():
+    info = _read_pid_file() if PID_FILE.exists() else None
+    if info is None:
         print("Not running.")
         return
-    info = json.loads(PID_FILE.read_text())
+    pid = info.get("pid", -1)
     try:
-        os.kill(info["pid"], signal.SIGTERM)
+        if _pid_is_alive(pid) and not _pid_is_scraper(pid):
+            # PID reuse: that pid belongs to some unrelated process now.
+            # Never signal it — treat the pid file as stale instead.
+            print(f"PID file points at pid {pid}, which is not a "
+                  "highlight-scraper process (the pid was likely recycled). "
+                  "Not signaling it; removed the stale pid file.")
+            return  # finally-block below removes the file
+        os.kill(pid, signal.SIGTERM)
         print(f"Stopped. Session '{info['session']}' saved.")
     except ProcessLookupError:
         print("Process was already gone (stale pid file removed).")
@@ -108,12 +185,18 @@ def cmd_stop(args):
 
 
 def cmd_status(args):
-    if not PID_FILE.exists():
+    info = _read_pid_file() if PID_FILE.exists() else None
+    if info is None:
         print("Not running.")
         return
-    info = json.loads(PID_FILE.read_text())
-    if not _pid_is_alive(info.get("pid", -1)):
+    pid = info.get("pid", -1)
+    if not _pid_is_alive(pid):
         print("Not running (stale pid file — will be cleaned up on next 'start').")
+        return
+    if not _pid_is_scraper(pid):
+        print(f"Not running (pid file points at pid {pid}, which is not a "
+              "highlight-scraper process — the pid was likely recycled; "
+              "will be cleaned up on next 'start').")
         return
     print(f"Running (pid={info['pid']}), session: {info['session']}")
 
@@ -166,8 +249,6 @@ def cmd_run_foreground(args):
     """Internal — this is what actually runs in the background process."""
     config = load_config()
     session = CaptureSession(config["db_path"], args.session, config)
-    from highlight_scraper.unknown_source_prompt import prompt_unknown_source
-    session.unknown_source_resolver = prompt_unknown_source
     session.listeners.append(
         lambda row: print(
             f"[{row.captured_at}] ({row.source_app or 'unknown'}) {row.text}"
@@ -192,10 +273,19 @@ def cmd_run_foreground(args):
 
     tag_hotkeys = None
     if args.with_tags:
-        from highlight_scraper.hotkeys import TagHotkeys
-        tag_hotkeys = TagHotkeys(on_tag=session.tag_last)
-        tag_hotkeys.start()
-        print("Tag hotkeys: listening (Ctrl+Alt+1/2/3)", flush=True)
+        try:
+            from highlight_scraper.hotkeys import TagHotkeys
+        except ImportError as e:
+            # pynput is an optional dependency; a missing one must degrade
+            # to capture-without-hotkeys, not kill the daemon (reviewer
+            # finding N3: this used to die with ModuleNotFoundError after
+            # the parent CLI had already printed "Started").
+            print(f"Tag hotkeys unavailable ({e}) — capture continues. "
+                  "Install pynput, or drop --with-tags.", flush=True)
+        else:
+            tag_hotkeys = TagHotkeys(on_tag=session.tag_last)
+            tag_hotkeys.start()
+            print("Tag hotkeys: listening (Ctrl+Alt+1/2/3)", flush=True)
 
     stop_flag = {"set": False}
 
