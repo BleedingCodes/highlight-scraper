@@ -89,6 +89,30 @@ def test_export_markdown_refuses_to_overwrite_by_default(tmp_path):
     store.close()
 
 
+def test_export_csv_neutralizes_formula_like_text(tmp_path):
+    """Regression for audit finding 12: captured text starting with
+    = + - @ must be exported as literal text, not as a cell a spreadsheet
+    would evaluate as a formula (CSV formula injection)."""
+    store = CaptureStore(tmp_path / "captures.db")
+    store.add_capture("=1+1|cmd", session="f")      # DDE/formula start
+    store.add_capture("@SUM('A1')", session="f")    # function start
+    store.add_capture("-not a formula bullet", session="f")
+    store.add_capture("plain text keeps no prefix", session="f")
+    out = tmp_path / "out.csv"
+
+    exporters.export_csv(store, "f", out)
+
+    with open(out, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+
+    texts = [row[-1] for row in rows[1:]]
+    assert texts[0] == "'=1+1|cmd", "formula-leading text must be apostrophe-prefixed"
+    assert texts[1] == "'@SUM('A1')"
+    assert texts[2] == "'-not a formula bullet"
+    assert texts[3] == "plain text keeps no prefix", "ordinary text must be untouched"
+    store.close()
+
+
 def test_export_csv_refuses_to_overwrite_by_default(tmp_path):
     store, _ = _seeded_store(tmp_path)
     out = tmp_path / "out.csv"
