@@ -9,9 +9,12 @@ be correct in one place.
 
 Merging: dragging a mouse selection fires many intermediate
 selection-changed events, not one. Without merging, every one of those
-becomes its own row. If the new text is a superset/subset of the last
-capture and it happens within merge_window_seconds, we update that row
-in place instead of inserting a new one.
+becomes its own row. If the new text extends or shrinks the last capture
+from the same starting point (pure prefix relation) and it happens
+within merge_window_seconds, we update that row in place instead of
+inserting a new one. Selections that only overlap the old text without
+a prefix relation become their own rows — the earlier capture is never
+destroyed by an in-place overwrite.
 
 0.4.0 additions:
   - _capture_count tracked for auto-export trigger
@@ -21,21 +24,27 @@ in place instead of inserting a new one.
 
 import threading
 import time
-import logging
 from pathlib import Path
 
 from highlight_scraper.source_info import get_active_window_info
 from highlight_scraper.storage import CaptureStore
 from highlight_scraper.watcher_core import SelectionWatcher
 
-logger = logging.getLogger(__name__)
-
 
 def _looks_like_extension(old_text: str, new_text: str) -> bool:
-    """True if new_text is the same highlight just grown or shrunk, not a new one."""
+    """True if new_text is the same highlight being dragged out or back
+    from the same starting point — a pure prefix relation — not an
+    unrelated selection that merely appears inside the old text.
+
+    Restricting to prefix relations (instead of arbitrary substring
+    containment) prevents a short re-selection inside the previous
+    highlight from silently overwriting and destroying it (audit
+    finding 3): an interior re-selection becomes a new row and the
+    earlier capture survives.
+    """
     if not old_text or not new_text:
         return False
-    return old_text in new_text or new_text in old_text
+    return new_text.startswith(old_text) or old_text.startswith(new_text)
 
 
 class CaptureSession:
@@ -45,12 +54,8 @@ class CaptureSession:
         self.store = CaptureStore(db_path)
         self.paused = False
         self.listeners = []  # callables(Capture) -> None, for UI updates
-        # A resolver returns {"action": "continue"|"name"|"discard",
-        # "label": str, "remember": bool}. Missing/failed decisions discard.
-        self.unknown_source_resolver = None
         self._lock = threading.Lock()
         self._last_text = None
-        self._last_source = None
         self._last_capture_time = 0.0
 
         # 0.4.0 — auto-export counter
@@ -86,62 +91,26 @@ class CaptureSession:
         window, app = get_active_window_info()
 
         excluded = self.config.get("excluded_apps", [])
-        if app and any(pattern.lower() in app.lower() for pattern in excluded):
-            return
-
-        source_app = (app or "").strip()
-        source_window = (window or "").strip()
-        if source_app.lower() in ("unknown", "none", "<unknown>"):
-            source_app = ""
-        if not source_app:
-            remembered = self.config.setdefault("remembered_unknown_sources", {})
-            # Be tolerant of an older/hand-edited config with an unexpected type.
-            if not isinstance(remembered, dict):
-                remembered = {}
-                self.config["remembered_unknown_sources"] = remembered
-            if source_window and remembered.get(source_window):
-                source_app = remembered[source_window]
-            else:
-                # Log attribution metadata only. Never include selected text.
-                logger.warning(
-                    "Selection source app is unknown; source_window=%r",
-                    source_window or None,
-                )
-                decision = None
-                if self.unknown_source_resolver:
-                    try:
-                        decision = self.unknown_source_resolver(source_window or None)
-                    except Exception:
-                        logger.exception("Unknown-source prompt failed; capture discarded")
-                decision = decision or {}
-                action = decision.get("action")
-                label = (decision.get("label") or "").strip()
-                if action == "name" and label:
-                    source_app = label
-                    if decision.get("remember") and source_window:
-                        remembered[source_window] = label
-                        try:
-                            from highlight_scraper.config import save_config
-                            save_config(self.config)
-                        except OSError:
-                            logger.exception("Could not save remembered source")
-                elif action == "continue":
-                    source_app = "⚠ Unknown source"
-                else:
+        if excluded:
+            if app is None:
+                # Fail closed: without app attribution we cannot prove the
+                # highlight is not from an excluded app, so it is skipped.
+                # (Privacy guard must not default open — see finding 1 and
+                # README Known Limits; opt out via exclude_unattributed_apps.)
+                if self.config.get("exclude_unattributed_apps", True):
                     return
+            elif any(pattern.lower() in app.lower() for pattern in excluded):
+                return
 
         now = time.time()
         merge_window = self.config.get("merge_window_seconds", 2.0)
-        source_identity = (source_app, source_window or None)
         with self._lock:
             is_extension = (
                 self._last_text is not None
-                and self._last_source == source_identity
                 and now - self._last_capture_time <= merge_window
                 and _looks_like_extension(self._last_text, text)
             )
             self._last_text = text
-            self._last_source = source_identity
             self._last_capture_time = now
 
         if is_extension:
@@ -149,7 +118,7 @@ class CaptureSession:
         else:
             row = self.store.add_capture(
                 text=text, session=self.session_name,
-                source_window=source_window or None, source_app=source_app,
+                source_window=window, source_app=app,
             )
 
         if row is None:
@@ -194,6 +163,9 @@ class CaptureSession:
         out_path = str(Path(raw_path).expanduser())
 
         try:
-            exporters.export_markdown(self.store, self.session_name, out_path)
-        except Exception:
-            pass  # auto-export failure must never interrupt capture
+            exporters.export_markdown(self.store, self.session_name, out_path,
+                                       force=True)
+        except Exception as e:
+            # auto-export failure must never interrupt capture — but it must
+            # not be silent either (goes to the daemon log / backend log).
+            print(f"[auto-export] failed: {e}", flush=True)
