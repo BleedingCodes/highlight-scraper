@@ -10,7 +10,9 @@ different process) reads or updates the same file at the same time.
   - search(query, ...)      — full-text search across capture bodies
 """
 
+import os
 import sqlite3
+import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -49,6 +51,16 @@ class CaptureStore:
         self.conn.execute(SCHEMA)
         self.conn.commit()
         self._lock = threading.Lock()
+
+        # Capture text is stored unencrypted and can contain anything the
+        # user highlights (including secrets) — keep it owner-only instead
+        # of relying on the process umask (audit finding 5).
+        try:
+            os.chmod(self.db_path, 0o600)
+            os.chmod(self.db_path.parent, 0o700)
+        except OSError as e:
+            print(f"warning: could not restrict data file permissions: {e}",
+                  file=sys.stderr)
 
     def add_capture(self, text, session, source_window=None, source_app=None) -> Capture:
         ts = datetime.now().isoformat(timespec="seconds")
@@ -149,8 +161,11 @@ class CaptureStore:
             params.append(session)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        cur = self.conn.execute(sql, params)
-        return [Capture(*row) for row in cur.fetchall()]
+        # Reads share one connection with the watcher thread's writes;
+        # serialize them like everything else (audit finding 14).
+        with self._lock:
+            cur = self.conn.execute(sql, params)
+            return [Capture(*row) for row in cur.fetchall()]
 
     # ── existing methods (unchanged) ─────────────────────────────────────────
 
@@ -163,17 +178,21 @@ class CaptureStore:
             params.append(session)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        cur = self.conn.execute(sql, params)
-        return [Capture(*row) for row in cur.fetchall()]
+        # Reads share one connection with the watcher thread's writes;
+        # serialize them like everything else (audit finding 14).
+        with self._lock:
+            cur = self.conn.execute(sql, params)
+            return [Capture(*row) for row in cur.fetchall()]
 
     def sessions(self) -> list:
         """Returns (name, count, first_timestamp, last_timestamp) per session,
         most recently active first."""
-        cur = self.conn.execute(
-            "SELECT session, COUNT(*), MIN(captured_at), MAX(captured_at) "
-            "FROM captures GROUP BY session ORDER BY MAX(captured_at) DESC"
-        )
-        return cur.fetchall()
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT session, COUNT(*), MIN(captured_at), MAX(captured_at) "
+                "FROM captures GROUP BY session ORDER BY MAX(captured_at) DESC"
+            )
+            return cur.fetchall()
 
     def close(self):
         self.conn.close()
