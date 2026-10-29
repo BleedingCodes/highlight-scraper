@@ -7,9 +7,7 @@ came from. Three front ends: CLI, desktop GUI, and system tray icon.
 Built for researchers, writers, and power users who highlight text constantly
 and want a searchable record without changing how they work.
 
-![Highlight Scraper GUI](highlight-scraper-gui-v0-4.png)
-
-![Unknown source warning prompt](highlight-scraper_unknown-source.png)
+![Highlight Scraper GUI v0.4.0](https://github.com/BleedingCodes/highlight-scraper/blob/main/highlight-scraper-gui-v0-4.png)
 
 ---
 
@@ -22,14 +20,13 @@ and want a searchable record without changing how they work.
 - **Tags** — mark captures as `important`, `question`, or `followup` via buttons, CLI, or hotkeys
 - **Search** — live search across captures in the GUI as you type; CLI search command available
 - **Per-capture delete** — remove individual captures from the GUI right-click menu or CLI
-- **Auto-export** — automatically export the current session to Markdown every N captures
-- **Export** — Markdown, CSV, or JSON
+- **Auto-export** — automatically export the current session to Markdown every N captures (replaces the output file each time; failures appear in the backend log)
+- **Export** — Markdown, CSV, or JSON (CSV text cells beginning with `= + - @` are apostrophe-prefixed so spreadsheets import them as literal text, not formulas)
 - **Three front ends** — CLI, tkinter GUI, system tray icon — all running on the same engine
 - **Click-and-hold-to-paste** — accessibility gesture, X11 only, optional
 - **Ctrl+Alt+1/2/3 tag hotkeys** — optional, requires `pynput`
 - **Merge-on-extension** — extending a highlight within 2 seconds updates the existing row rather than creating a duplicate
-- **Excluded apps** — password managers and other sensitive apps are blocked from capture by default
-- **Unknown-source warning** — when the source app cannot be identified, capture waits for your decision and is discarded unless you choose to save it
+- **Excluded apps** — password managers and other sensitive apps are blocked from capture by default; when app attribution is unavailable, capture is skipped rather than risked (see Known Limits)
 
 ---
 
@@ -40,7 +37,7 @@ and want a searchable record without changing how they work.
 | Python 3.9+ | All | |
 | `xclip`, `python3-xlib`, `xdotool` | X11 | For event-driven capture and source attribution |
 | `wl-clipboard` | Wayland | For capture; paste/hotkey features are X11 only |
-| `python3-tk` | Linux | GUI and unknown-source prompts in GUI, CLI, and tray |
+| `python3-tk` | Linux | GUI front end only |
 | `pynput` | Optional | Paste-on-hold and tag hotkeys |
 | `pystray`, `pillow` | Optional | Tray icon front end |
 
@@ -111,11 +108,11 @@ always-on capture without a visible window.
 | Command | Flags | What It Does |
 |---|---|---|
 | `start` | `--session NAME`, `--with-paste`, `--with-tags` | Begin a capture session |
-| `stop` | — | End the running session |
-| `status` | — | Show running status and session name; auto-heals stale PID files |
+| `stop` | — | End the running session (only signals processes it can verify as highlight-scraper daemons) |
+| `status` | — | Show running status and session name; reports stale/foreign PID files (healed on next `start`) |
 | `tag TAGNAME` | — | Tag the most recent capture |
 | `sessions` | — | List all sessions with capture count and timestamps |
-| `export` | `--format md\|csv\|json`, `--out PATH`, `--session NAME` | Export captures to a file |
+| `export` | `--format md\|csv\|json`, `--out PATH`, `--session NAME`, `--force` | Export captures to a file (`--force` overwrites an existing output file) |
 
 ---
 
@@ -130,10 +127,10 @@ Auto-created at `~/.config/highlight_scraper/config.json` on first run.
 | `min_length` | `3` | Highlights shorter than this are ignored |
 | `merge_window_seconds` | `2.0` | Extending a highlight within this window updates the existing row |
 | `excluded_apps` | password managers | App name substrings — matches are never stored |
-| `remembered_unknown_sources` | `{}` | Exact window-title to source-label mappings explicitly saved from the unknown-source prompt |
+| `exclude_unattributed_apps` | `true` | When app attribution is unavailable, skip capture (fail closed) instead of risking an excluded app's content |
 | `db_path` | `~/.local/share/highlight_scraper/captures.db` | SQLite database location |
-| `auto_export_every` | `0` (off) | Auto-export every N captures to Markdown — 0 disables |
-| `auto_export_path` | `~/highlights_<session>.md` | Output file for auto-export |
+| `auto_export_every` | `0` (off) | Auto-export every N captures to Markdown — 0 disables; the output file is replaced each time |
+| `auto_export_path` | `~/highlights_<session>.md` | Output file for auto-export (dedicated to auto-export — it is overwritten at every threshold) |
 
 ---
 
@@ -144,9 +141,8 @@ highlight-scraper/
 ├── src/highlight_scraper/
 │   ├── watcher_core.py     # X11/Wayland selection watcher, backend detection
 │   ├── session_manager.py  # Central engine — filtering, merging, storage coordination
-│   ├── unknown_source_prompt.py # Fail-closed prompt for unidentified sources
 │   ├── storage.py          # SQLite capture store
-│   ├── source_info.py      # Active app/window detection (X11 and supported Wayland)
+│   ├── source_info.py      # Active app/window detection (X11 only)
 │   ├── export.py           # Markdown, CSV, JSON export
 │   ├── config.py           # Config file load/save
 │   ├── paste_on_hold.py    # Click-and-hold-to-paste gesture
@@ -154,13 +150,11 @@ highlight-scraper/
 │   ├── cli.py              # CLI front end
 │   ├── gui.py              # tkinter GUI front end
 │   └── tray.py             # System tray front end
-├── tests/                  # 32 pytest tests
+├── tests/                  # 29 pytest tests
 ├── install.sh              # One-command setup
 ├── conftest.py             # Lets pytest find the package without installing
 ├── pyproject.toml
 ├── CHANGELOG.md
-├── highlight-scraper-complete-modification-guide.md
-├── highlight-scraper_unknown-source.png
 ├── LICENSE
 └── README.md
 ```
@@ -173,13 +167,12 @@ logic lives in `session_manager.py` — change it once, it applies everywhere.
 ## Running Tests
 
 ```bash
-python3 -m pip install -e '.[dev]'
-python3 -m pytest -q
+pip install pytest --break-system-packages
+pytest
 ```
 
-32 tests covering config defaults, export formats and overwrite protection,
-session filtering and merge behavior, watcher platform detection, and
-fail-closed handling when the capture source is unknown.
+29 tests covering config defaults and merging, the storage layer, all three
+export formats, session manager filtering rules, and excluded-app blocking.
 Works right after cloning — `conftest.py` puts `src/` on the path without
 needing to run `install.sh` first.
 
@@ -187,13 +180,14 @@ needing to run `install.sh` first.
 
 ## Known Limits
 
-- **Unknown source handling** — unidentified captures are held before SQLite and a prompt offers Continue anyway, Name source & save, or Don’t capture. Closing the prompt discards the capture. A name applies only to that capture unless the separate “Remember this source” checkbox is selected; remembering uses the exact window title and entered label. If no title is available, the source cannot be remembered. The diagnostic warning records attribution metadata, including the window title when available, never the highlighted text.
+- **Captures are stored unencrypted, owner-only** — everything you highlight (outside excluded apps) is written in plaintext to the SQLite DB and, when `start` logs to a session file, to the backend log. Files and directories are explicitly created `0600`/`0700` (not umask-dependent), but anyone running as your user can read them, and the SQLite `-wal`/`-shm` companions inherit the umask while the database is open. Don't highlight credentials where you wouldn't store them; rely on `excluded_apps` for sensitive apps
 - **Source attribution on Wayland** — supported for Hyprland, Sway/i3, and KDE Plasma Wayland; returns `None` on other compositors, capture still works
+- **Privacy is fail-closed when attribution is unavailable** — on compositors without attribution support (e.g. GNOME Wayland), or on X11 without `xdotool`, highlights are **not captured** while `excluded_apps` is non-empty and `exclude_unattributed_apps` is `true` (the default): the tool cannot prove the highlight isn't from an excluded app. Set `exclude_unattributed_apps: false` in the config to keep capturing unattributed highlights (at your own risk — excluded-app names can then be missed silently)
 - **Browser URLs are never captured** — only the window title
 - **Paste-on-hold and tag hotkeys are X11 only** — Wayland blocks global input listening without elevated permissions
 - **Wayland event-loop path is unverified on a live Wayland session** — X11 path has been verified end-to-end on Linux Mint/Cinnamon
 - **Linux only** — PRIMARY selection has no equivalent on Windows or macOS
-- **Auto-export does not refresh an existing Markdown file** — a scheduled export succeeds only when its target file does not already exist. Later attempts to write to the same path are blocked by the overwrite guard, and the failure is silently ignored. Captures remain in SQLite, but the Markdown file can become stale. Until this is fixed, export to a new filename or manually replace the file with the CLI’s --force option.
+
 ---
 
 ## Built by MainbyteLabs
