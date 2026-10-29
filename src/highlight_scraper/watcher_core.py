@@ -93,15 +93,27 @@ class SelectionWatcher:
         try:
             import Xlib.display  # noqa: F401
             from Xlib.ext import xfixes  # noqa: F401
-            return self._run_x11, "X11 (Xfixes, event-driven)"
+            has_xlib = True
         except ImportError:
-            if shutil.which("xclip"):
-                return self._run_x11_polling, "X11 (xclip polling — python3-xlib not installed)"
-            raise RuntimeError(
-                "Neither python3-xlib nor xclip is available.\n"
-                "Install one with: sudo apt install python3-xlib   (best)\n"
-                "             or:  sudo apt install xclip          (fallback)"
-            )
+            has_xlib = False
+
+        # xclip is mandatory on X11: even the "event-driven" Xfixes mode
+        # reads the selection through xclip. Selecting Xfixes without it
+        # meant "Backend: X11 (Xfixes, event-driven)" followed by zero
+        # captures and no error (audit finding 8).
+        has_xclip = shutil.which("xclip") is not None
+
+        if has_xlib and has_xclip:
+            return self._run_x11, "X11 (Xfixes, event-driven)"
+        if has_xclip:
+            return self._run_x11_polling, "X11 (xclip polling — python3-xlib not installed)"
+
+        raise RuntimeError(
+            "xclip is required to read the selection but isn't installed"
+            + (" (python3-xlib is available, but xclip is still needed)"
+               if has_xlib else "")
+            + ".\nInstall it with: sudo apt install xclip"
+        )
 
     # ---- X11: event-driven via Xfixes, with automatic fallback -------------
 
@@ -145,14 +157,20 @@ class SelectionWatcher:
 
         last_seen = ""
         while not self._stop_event.is_set():
-            if d.pending_events():
-                d.next_event()  # we only registered for one kind of event
-                text = self._read_primary_xclip()
-                if text and text != last_seen:
-                    last_seen = text
-                    self.on_change(text)
-            else:
-                time.sleep(0.05)  # just yielding the CPU, not polling content
+            try:
+                if d.pending_events():
+                    d.next_event()  # we only registered for one kind of event
+                    text = self._read_primary_xclip()
+                    if text and text != last_seen:
+                        last_seen = text
+                        self.on_change(text)
+                else:
+                    time.sleep(0.05)  # just yielding the CPU, not polling content
+            except Exception as e:
+                # one broken iteration (X hiccup, hostile content, a bug in
+                # on_change) must not silently end the capture loop (finding 11)
+                print(f"[watcher] event-driven X11 capture error: {e}", flush=True)
+                time.sleep(0.05)  # rate-limit a repeating error
 
     @staticmethod
     def _read_primary_xclip() -> str:
@@ -170,10 +188,14 @@ class SelectionWatcher:
     def _run_x11_polling(self):
         last_seen = ""
         while not self._stop_event.is_set():
-            text = self._read_primary_xclip()
-            if text and text != last_seen:
-                last_seen = text
-                self.on_change(text)
+            try:
+                text = self._read_primary_xclip()
+                if text and text != last_seen:
+                    last_seen = text
+                    self.on_change(text)
+            except Exception as e:
+                # capture must survive a broken iteration (finding 11)
+                print(f"[watcher] X11 polling capture error: {e}", flush=True)
             time.sleep(self.poll_interval)
 
     # ---- Wayland: event-driven via wl-paste --watch ------------------------
@@ -193,15 +215,22 @@ class SelectionWatcher:
         buf = ""
         try:
             while not self._stop_event.is_set():
-                chunk = proc.stdout.read(1)
-                if chunk == "":
-                    break  # wl-paste exited — likely --watch unsupported
-                if chunk == SEP:
-                    if buf:
-                        self.on_change(buf)
-                    buf = ""
-                else:
-                    buf += chunk
+                try:
+                    chunk = proc.stdout.read(1)
+                    if chunk == "":
+                        break  # wl-paste exited — likely --watch unsupported
+                    if chunk == SEP:
+                        payload, buf = buf, ""
+                        if payload:
+                            self.on_change(payload)
+                    else:
+                        buf += chunk
+                except Exception as e:
+                    # e.g. a non-UTF-8 byte in text mode (UnicodeDecodeError)
+                    # or a bug in on_change must not kill capture (finding 11)
+                    print(f"[watcher] Wayland capture error: {e}", flush=True)
+                    buf = ""  # discard any partially-corrupted buffer
+                    time.sleep(self.poll_interval)  # rate-limit repeating errors
         finally:
             proc.terminate()
 
@@ -226,7 +255,14 @@ class SelectionWatcher:
                 text = result.stdout
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 text = ""
-            if text and text != last_seen:
-                last_seen = text
-                self.on_change(text)
+            except Exception as e:
+                # unexpected failure must not kill capture (finding 11)
+                print(f"[watcher] Wayland polling error: {e}", flush=True)
+                text = ""
+            try:
+                if text and text != last_seen:
+                    last_seen = text
+                    self.on_change(text)
+            except Exception as e:
+                print(f"[watcher] Wayland capture error: {e}", flush=True)
             time.sleep(self.poll_interval)
