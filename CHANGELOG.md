@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.4.2 — remediation release
+
+Audit-driven fixes (see AUDIT-FINDINGS.md / AUDIT-REMEDIATION.md). Test
+suite: 31 → 67 tests, all passing.
+
+- **Privacy fail-closed** — when app attribution is unavailable (GNOME
+  Wayland, missing xdotool, attribution failure) and `excluded_apps` is
+  non-empty, capture is now SKIPPED instead of silently stored — the
+  previous behavior stored password-manager content in that case.
+  Opt out via the new `exclude_unattributed_apps` config key (default `true`).
+- **storage.py** — no more silent data loss from substring merges: a
+  re-selection that merely appears *inside* the previous highlight now
+  becomes a new row (merge only on true prefix extension/shrink).
+  All read queries (`search`/`query`/`sessions`) now take the store lock.
+- **session_manager.py** — auto-export actually repeats now: it writes
+  `force=True` at every threshold (was: succeeded once, then silently
+  died on FileExistsError). Failures are logged, never interrupt capture.
+- **config.py** — a corrupt/unreadable `config.json` is backed up
+  (`config.json.corrupt-<ts>`) and defaults run in memory; the corrupt
+  file is NEVER overwritten (your exclude list can't be wiped by a torn
+  write). Non-object JSON no longer crashes every front end. Saves are
+  atomic (temp file + os.replace).
+- **storage.py / cli.py** — capture DB (0600), data dir (0700), session
+  logs and PID file (0600) are now explicitly created owner-only instead
+  of umask-derived.
+- **gui.py** — the export dialog's "Replace file?" confirmation is now
+  honored: the exporter runs with force=True instead of aborting with an
+  unhandled FileExistsError (both the live-session and browsed-session
+  export paths). Invalid session names are rejected with a message box.
+- **cli.py** — `stop`/`start`/`status` verify via /proc that the PID file
+  points at an actual highlight-scraper daemon; a recycled PID that
+  belongs to another process is never signaled. `start` detects a daemon
+  that died immediately and reports failure instead of printing "Started".
+  Corrupt PID files self-heal. `--session` names containing `/`, `\` or
+  NUL are rejected with a clean message. `--with-tags` without `pynput`
+  degrades to capture-without-hotkeys instead of killing the daemon.
+- **watcher_core.py** — the Xfixes backend refuses to start without
+  `xclip` (previously: "event-driven" backend selected, zero captures,
+  no error). All capture loops now survive individual failures (decode
+  errors, transient X/Wayland errors) instead of silently dying.
+- **export.py** — CSV export prefixes cells starting with `= + - @` with
+  an apostrophe so spreadsheets treat them as text, not formulas.
+- **source_info.py** — `from __future__ import annotations`; the package
+  is importable on the README-declared Python 3.9 again (PEP 604 unions
+  used to make it unimportable).
+- **Docs** — README "Known Limits" rewritten (fail-closed privacy,
+  plaintext/owner-only storage), config table updated, command reference
+  corrected (`status` doesn't auto-heal; `export` lists `--force`);
+  modification guide synced to the fixed code.
+
 ## 0.4.1 — export overwrite guard
 
 - **export.py** — all three exporters (Markdown, CSV, JSON) now refuse to
@@ -39,8 +89,8 @@ All four changes are to the program itself, not the GUI skin.
 - **session_manager.py** — Auto-export: after every N captures
   (configured via `auto_export_every` in config.json, default 0 = off),
   the current session is automatically exported to a Markdown file at
-  `auto_export_path`. Export failures are silently swallowed — they never
-  interrupt capture.
+  `auto_export_path`. Export failures never interrupt capture (as of 0.4.2
+  they are logged instead of silently swallowed).
 
 - **gui.py** — Search bar added to the capture list header. Filters the
   visible list in real time as you type; searches the current active
@@ -158,7 +208,7 @@ to end before shipping it. Fixed against the real error output:
   `pyproject.toml`, console scripts `highlight-scraper` / `highlight-scraper-gui`
   / `highlight-scraper-tray`) instead of a folder of scripts you `cd` into.
 - Added a real pytest suite (`tests/`) covering config, storage, export, and
-  session-manager logic — 29 tests, all passing. This is the actual gap between
+  session-manager logic. This is the actual gap between
   "the AI ran some manual asserts once" and software you can trust after a change.
 - Added highlight-merging: dragging a mouse selection fires many intermediate
   selection-changed events. Previously each one became its own database row.
