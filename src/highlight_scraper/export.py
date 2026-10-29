@@ -53,6 +53,16 @@ def export_markdown(store, session, out_path, *, force: bool = False):
     Path(out_path).write_text("\n".join(lines), encoding="utf-8")
 
 
+def _neutralize_formula(text: str) -> str:
+    """Neutralize spreadsheet formula injection: captured text beginning
+    with = + - @ (or a tab/CR) would be evaluated as a formula when the
+    CSV is opened in Excel/LibreOffice (audit finding 12). A leading
+    apostrophe forces the cell to be treated as literal text."""
+    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text
+    return text
+
+
 def export_csv(store, session, out_path, *, force: bool = False):
     _guard_overwrite(out_path, force)
 
@@ -61,7 +71,8 @@ def export_csv(store, session, out_path, *, force: bool = False):
         writer = csv.writer(f)
         writer.writerow(["id", "captured_at", "session", "source_app", "source_window", "tag", "text"])
         for r in rows:
-            writer.writerow([r.id, r.captured_at, r.session, r.source_app, r.source_window, r.tag, r.text])
+            writer.writerow([r.id, r.captured_at, r.session, r.source_app,
+                             r.source_window, r.tag, _neutralize_formula(r.text)])
 
 
 def export_json(store, session, out_path, *, force: bool = False):
