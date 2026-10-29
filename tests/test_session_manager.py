@@ -9,8 +9,20 @@ because start() launches the real X11/Wayland watcher — not available
 in a test environment, and not what these tests are about anyway.
 """
 
-import highlight_scraper.session_manager as session_manager
+import pytest
+
+from highlight_scraper import session_manager
 from highlight_scraper.session_manager import CaptureSession
+
+
+@pytest.fixture(autouse=True)
+def attributed_active_window(monkeypatch):
+    """Attribute a benign active app by default. Under the fail-closed
+    privacy rule, unattributed highlights are skipped by default, so tests
+    that exercise the capture path must run with an attributed app; tests
+    that specifically test the unattributed path override this."""
+    monkeypatch.setattr(session_manager, "get_active_window_info",
+                        lambda: ("Some Window", "some_app"))
 
 
 def _session(tmp_path, **config_overrides):
@@ -20,12 +32,7 @@ def _session(tmp_path, **config_overrides):
         "merge_window_seconds": 2.0,
         **config_overrides,
     }
-    session = CaptureSession(tmp_path / "captures.db", "test-session", config)
-    # These tests exercise capture, filtering, and merging semantics rather
-    # than the interactive unknown-source decision. Explicitly approve unknown
-    # sources here so results do not depend on the developer's active window.
-    session.unknown_source_resolver = lambda _window: {"action": "continue"}
-    return session
+    return CaptureSession(tmp_path / "captures.db", "test-session", config)
 
 
 class _FakeClock:
@@ -88,17 +95,50 @@ def test_excluded_app_match_is_case_insensitive(tmp_path, monkeypatch):
     session.store.close()
 
 
-def test_unknown_source_is_discarded_without_user_decision(tmp_path, monkeypatch, caplog):
+def test_unattributed_highlight_is_skipped_when_exclusions_defined(tmp_path, monkeypatch):
+    """Fail closed: with no app attribution we cannot prove the highlight
+    is not from an excluded (e.g. password-manager) app, so it is skipped.
+    Regression for audit finding 1."""
     session = _session(tmp_path)
-    session.unknown_source_resolver = None
+    received = []
+    session.listeners.append(received.append)
     monkeypatch.setattr(session_manager, "get_active_window_info",
-                        lambda: ("Private terminal window", None))
+                        lambda: (None, None))
 
-    session._handle("secret-token-that-must-not-be-logged")
+    session._handle("my secret password is hunter2")
 
+    assert received == [], "an unattributed highlight must not be stored or emitted"
     assert session.store.query(session="test-session") == []
-    assert "Private terminal window" in caplog.text
-    assert "secret-token-that-must-not-be-logged" not in caplog.text
+    session.store.close()
+
+
+def test_unattributed_highlight_captured_when_fail_closed_disabled(tmp_path, monkeypatch):
+    """The documented opt-out: exclude_unattributed_apps=False restores
+    capturing even when attribution is unavailable."""
+    session = _session(tmp_path, exclude_unattributed_apps=False)
+    received = []
+    session.listeners.append(received.append)
+    monkeypatch.setattr(session_manager, "get_active_window_info",
+                        lambda: (None, None))
+
+    session._handle("captured despite no attribution")
+
+    assert len(received) == 1
+    session.store.close()
+
+
+def test_unattributed_highlight_captured_when_exclude_list_empty(tmp_path, monkeypatch):
+    """An empty excluded list disables attribution-based filtering entirely,
+    including the unattributed fail-closed skip."""
+    session = _session(tmp_path, excluded_apps=[])
+    received = []
+    session.listeners.append(received.append)
+    monkeypatch.setattr(session_manager, "get_active_window_info",
+                        lambda: (None, None))
+
+    session._handle("no exclusion list, no gating")
+
+    assert len(received) == 1
     session.store.close()
 
 
@@ -158,6 +198,28 @@ def test_shrinking_a_highlight_also_merges(tmp_path, monkeypatch):
     session.store.close()
 
 
+def test_interior_substring_reselection_is_a_new_row_not_an_overwrite(tmp_path, monkeypatch):
+    """Regression for audit finding 3: a short selection that is an
+    *interior* substring of the previous highlight (no prefix relation)
+    must become its own row — the earlier capture must survive. The old
+    substring rule treated this as a 'shrink' and overwrote row 1,
+    destroying the first capture."""
+    session = _session(tmp_path)
+    clock = _FakeClock()
+    monkeypatch.setattr(session_manager.time, "time", clock.time)
+
+    session._handle("The transformer architecture is powerful")
+    clock.advance(1.0)  # within the merge window
+    session._handle("powerful")
+
+    rows = session.store.query(session="test-session")
+    assert len(rows) == 2, "an interior re-selection must not overwrite the prior capture"
+    assert rows[1].text == "The transformer architecture is powerful", \
+        "the first capture's text must survive untouched"
+    assert rows[0].text == "powerful"
+    session.store.close()
+
+
 def test_unrelated_highlight_after_merge_window_is_a_new_row(tmp_path, monkeypatch):
     session = _session(tmp_path)
     clock = _FakeClock()
@@ -201,6 +263,23 @@ def test_merged_capture_preserves_existing_tag(tmp_path, monkeypatch):
     rows = session.store.query(session="test-session")
     assert len(rows) == 1
     assert rows[0].tag == "key-finding", "extending a tagged highlight must not drop the tag"
+    session.store.close()
+
+
+def test_auto_export_updates_file_at_every_threshold(tmp_path):
+    """Regression for audit finding 2: auto-export used to succeed once,
+    then silently die on FileExistsError because export_markdown was
+    called without force=True. Every threshold must recreate the file."""
+    session = _session(tmp_path, auto_export_every=1,
+                       auto_export_path=str(tmp_path / "auto.md"))
+
+    session._handle("First capture alpha")
+    session._handle("Second capture bravo")
+
+    content = (tmp_path / "auto.md").read_text()
+    assert "First capture alpha" in content
+    assert "Second capture bravo" in content, \
+        "the second export must replace the file, not silently abort"
     session.store.close()
 
 
